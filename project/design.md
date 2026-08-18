@@ -1,4 +1,13 @@
-# Diseño del agente
+# Diseño y documentación técnica del agente UCS
+
+Este documento combina la formulación académica del agente con la descripción
+de la implementación actual. La fuente de verdad del solver es
+`project/backend/src/main.py`; `project/backend/src/simulator.py` define el
+contrato de legalidad usado para reproducir los planes.
+
+> Las afirmaciones de optimalidad, tiempo y memoria requieren pruebas
+> reproducibles. La suite existente valida el plan demo y no constituye por sí
+> sola una prueba independiente de optimalidad del solver.
 
 Este documento completa la formulación del problema antes de la implementación principal. El entorno es totalmente observable, determinista, secuencial, estático, discreto y de agente único; por eso la solución correcta es un plan completo y el marco apropiado es la búsqueda clásica en grafos, en particular búsqueda de costo uniforme (UCS), con una representación canónica del estado y una generación de sucesores que no explode el espacio.
 El problema no es solo “encontrar una solución” sino hacerlo con una formulación que mantenga la búsqueda completa y óptima sin explotar la memoria ni el tiempo. En este entorno, el cuello de botella no es el mapa, sino la representación del espacio de estados. Si el agente genera acciones irrelevantes, el costo computacional crece de forma combinatoria.
@@ -372,3 +381,94 @@ La clave para mejorar el rendimiento no es “subir la capacidad”, “ignorar 
 - mantener `CLOSED` sobre equivalencias físicas.
 
 Esto permite que UCS siga siendo completo y óptimo, pero sin perder tiempo en un espacio de estados inflado artificialmente.
+
+---
+
+## Arquitectura del componente
+
+### Contexto del sistema — C4 nivel contexto
+
+```mermaid
+flowchart LR
+        User[Usuario] --> Frontend[Frontend React/Vite]
+        Frontend -->|POST /api/solve| API[FastAPI Emergency Control API]
+        API --> Solver[Agente UCS]
+        Solver --> Scenario[scenario.json]
+        Solver --> Response[Plan JSON]
+        Response --> Frontend
+        Frontend --> Executor[Executor visual]
+        Executor --> Goal[Mission complete]
+```
+
+### Componentes y dependencias
+
+```mermaid
+flowchart TD
+        API[FastAPI endpoints] --> SA[solve_agent]
+        SA --> KEY[_state_key]
+        SA --> SUC[_successors]
+        SUC --> IDX[_ScenarioIndex]
+        SUC --> CLONE[_clone_state]
+        SUC --> DROP[_drop_candidates]
+        SA --> PQ[heapq priority queue]
+        SA --> GOAL[goal test]
+        SA --> INIT[simulator.initial_state]
+        SIM[simulator.py] --> VALIDATE[simulate / goal_satisfied]
+```
+
+| Componente | Ubicación | Responsabilidad |
+|---|---|---|
+| API | `backend/src/main.py` | Expone `/api/health`, `/api/scenario` y `/api/solve`. |
+| Solver | `backend/src/main.py` | Ejecuta UCS, genera sucesores y aplica dominancia. |
+| Índice | `_ScenarioIndex` | Agrupa datos estáticos del escenario para evitar búsquedas repetidas. |
+| Simulador | `backend/src/simulator.py` | Aplica pasos, valida precondiciones y comprueba la meta. |
+| Frontend | `frontend/src/lib/api.ts`, `executor.ts` | Solicita y ejecuta el plan. |
+
+El código usa composición de funciones y diccionarios de estado; no existe una
+jerarquía de clases para las acciones. `_ScenarioIndex` es una estructura
+inmutable por contrato (`dataclass(frozen=True)`), aunque sus diccionarios
+internos siguen siendo referencias mutables. `_clone_state` realiza copias
+controladas para que cada sucesor pueda modificarse sin alterar el estado padre;
+esta propiedad debe mantenerse cubierta por pruebas.
+
+## Calidad, rendimiento y limitaciones verificables
+
+### Rendimiento
+
+`_ScenarioIndex` evita parte de las búsquedas lineales y `_clone_state` evita
+un `deepcopy` completo. Sin embargo, cada sucesor sigue copiando varios
+diccionarios y cada nodo conserva el plan completo (`path + [action]`), por lo
+que tiempo y memoria pueden crecer con la cantidad de etiquetas Pareto.
+
+La respuesta pública actual no expone expansiones, tamaño máximo de frontera,
+cantidad de etiquetas ni memoria. Por ello no deben documentarse cifras de
+rendimiento sin una medición externa reproducible.
+
+### Corrección y confiabilidad
+
+- `simulator.py` rechaza batería insuficiente, puertas cerradas, carga excedida,
+    dependencias incumplidas y operaciones fuera de zona.
+- Un plan del solver debe reproducirse con `simulate` y satisfacer
+    `goal_satisfied` antes de considerarse válido.
+- La prueba existente en `backend/tests/test_demo_plan.py` valida el plan
+    artesanal, no directamente `solve_agent`.
+- Agotar 50.000 expansiones no demuestra que no exista solución; significa que
+    el presupuesto configurado fue insuficiente.
+
+### Seguridad y operación
+
+La API usa CORS abierto y no tiene autenticación. Esto es apropiado para la
+demo local, pero no para producción. Un despliegue real debería validar el
+esquema del escenario, limitar tamaños y rechazar costos negativos.
+
+### Deuda documentada
+
+1. El archivo contiene dos implementaciones de búsqueda; debe conservarse una
+     sola ruta activa.
+2. `_drop_candidates` documenta conservar alternativas relevantes de capacidad,
+     pero la implementación actual retorna candidatos muertos; esta diferencia
+     requiere una prueba antes de cualquier corrección.
+3. Los diagnósticos estáticos reportan complejidad elevada en el generador de
+     sucesores y en el simulador.
+4. La optimalidad del costo debe compararse con una referencia independiente de
+     UCS; el plan demo no es un oráculo de optimalidad.

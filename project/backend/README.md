@@ -2,10 +2,11 @@
 
 Python API that exposes `POST /api/solve`.
 
-The default implementation returns a **demo plan** (no search / no AI) so the
-frontend can be tested end-to-end. Students replace the solve handler with
-their search agent. Do not «fix» `scenario.json` (capacity, battery, rooms)
-to make UCS finish: formulate `Applicable` instead. See `project/design.md`.
+The API uses uniform-cost search (UCS) to produce a minimum-cost plan. The
+search uses a canonical state, battery dominance, and restricted `DROP`
+successors so the real scenario remains solvable without changing its rules.
+Do not «fix» `scenario.json` (capacity, battery, rooms) to make UCS finish:
+formulate `Applicable` instead. See `project/design.md`.
 
 ## Run
 
@@ -17,7 +18,7 @@ python -m venv .venv
 # macOS/Linux:
 # source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn src.main:app --reload --app-dir src --port 8000
+uvicorn src.main:app --reload --port 8000
 ```
 
 Or from `backend/src`:
