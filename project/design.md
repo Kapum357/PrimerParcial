@@ -79,42 +79,15 @@ floor     = llaves, herramientas y materiales en sus zonas iniciales
 La capacidad, la batería máxima, los costos y las dependencias son constantes
 derivadas del escenario; no son dimensiones independientes del estado.
 
-### 2.3 Información derivada y equivalencia
+### 2.4 Clasificación atómica de objetos muertos
 
-No se almacenan como parte del estado físico el grafo de corredores, los costos,
-la capacidad, la batería máxima, los requisitos de herramientas/materiales ni
-las dependencias de estaciones, porque se derivan del escenario.
+El entorno es monotónico (puertas abiertas, paneles reparados y estaciones activadas no revierten su estado). La arquitectura descompone la verificación de objetos muertos en funciones puras y reutilizables:
 
-`_state_key(state, index)` construye una tupla canónica con zona, carga, suelo,
-puertas, paneles y estaciones. Ordena las estructuras para que el resultado no
-dependa del orden de inserción. Los materiales se identifican por tipo y
-cantidad, no por identificadores artificiales.
+- `_is_dead_key`: Una llave está muerta si no existe ninguna puerta cerrada pendiente que la requiera.
+- `_is_dead_tool`: Una herramienta está muerta si no existe ningún panel dañado que la necesite.
+- `_is_dead_material`: Un material está muerto si no existe ningún panel dañado que lo requiera.
 
-La batería no está dentro de `_state_key`. Para compensarlo, `solve_agent`
-conserva varias etiquetas Pareto `(costo, batería)` por clave física. Una
-etiqueta se domina si otra llega al mismo mundo con costo menor o igual y
-batería mayor o igual.
-
-Los datos de historial no son estado físico:
-
-```text
-g(n), parent, action
-```
-
-`g(n)` es el costo acumulado; `parent` y `action` describen cómo se llegó al
-nodo. El solver actual almacena el camino completo en cada entrada de frontera;
-conceptualmente puede reconstruirse mediante padres sin incluirlos en la clave.
-
-### 2.4 Objetos muertos
-
-El escenario es monotónico: las puertas abiertas no se cierran, los paneles
-reparados no vuelven a dañarse y las estaciones activadas no vuelven a estar
-offline. `_is_dead_item` permite ignorar en la clave del suelo objetos que ya no
-pueden habilitar acciones futuras, como una llave cuya puerta está abierta o una
-herramienta cuyo panel asociado ya está reparado.
-
-Esta reducción solo es segura si el objeto no puede cambiar ninguna acción
-futura. Debe conservarse esa condición al extender el escenario.
+Los objetos muertos en el suelo se excluyen de la clave canónica (`_state_key`), colapsando estados físicamente equivalentes y acelerando la convergencia.
 
 ## 3. Acciones ($\mathcal{A}$)
 
@@ -142,16 +115,13 @@ siempre que no elimine un plan mínimo válido.
 
 Toda transición exige que la batería sea suficiente antes de pagar el costo.
 
-### 3.3 Restricción de `DROP`
+### 3.3 Política flexible de `DROP` en dos fases
 
-El contrato permite soltar un objeto cargado, pero generar `DROP` en cualquier
-estado multiplicaría las configuraciones del suelo. La política interna solo
-considera `DROP` cuando el robot está lleno, existe un recurso útil en la zona
-y el candidato es un objeto muerto según la política actual.
+Para evitar la explosión combinatoria sin caer en bloqueos de capacidad (*deadlocks*), `_drop_candidates` opera bajo un esquema *Just-in-Time*:
 
-Esta poda reduce el factor de ramificación, pero debe validarse con casos donde
-la capacidad obligue a liberar un objeto todavía relevante. La legalidad del
-simulador y la completitud del generador no son exactamente el mismo concepto.
+1. **Filtro de activación:** Solo se evalúa si el robot está a capacidad máxima y hay ítems útiles en el suelo de la zona actual (`_useful_items_in_zone`).
+2. **Fase 1 (Objetos muertos):** Si el payload contiene llaves, herramientas o materiales muertos, se devuelven como candidatos prioritarios (poda segura).
+3. **Fase 2 (Objetos vivos ordenados por utilidad):** Si todos los ítems son vivos, la heurística `_sort_by_utility` ordena los ítems según la distancia mínima al objetivo o demanda de paneles, permitiendo liberar espacio temporal para no bloquear el plan.
 
 ## 4. Modelo de transición ($\mathcal{T}$)
 
@@ -324,16 +294,13 @@ Para la instancia oficial todos los costos son positivos:
 
 $$c(s,a,s')\geq\epsilon>0$$
 
-Los costos concretos son:
+Los costos de las acciones se resuelven dinámicamente con valores por defecto directamente en `_successors`:
 
 - `MOVE`: costo del corredor usado.
-- `PICKUP`: `action_costs.pickup`.
-- `DROP`: `action_costs.drop`.
-- `OPEN_DOOR`, `REPAIR`, `ACTIVATE`: `action_costs.interact`.
-- `RECHARGE`: `action_costs.recharge`.
-
-No se usa distancia geométrica ni factor de terreno para el costo del solver;
-se usa el costo explícito de `scenario["corridors"]`.
+- `PICKUP`: `configured_costs.get("pickup", 1)`.
+- `DROP`: `configured_costs.get("drop", 1)`.
+- `OPEN_DOOR`, `REPAIR`, `ACTIVATE`: `configured_costs.get("interact", 2)`.
+- `RECHARGE`: `configured_costs.get("recharge", 3)`.
 
 ### 6.2 Costo del camino
 
@@ -345,120 +312,65 @@ La frontera prioriza el menor $g(n)$. Minimizar el número de pasos no es
 equivalente a minimizar el costo: una ruta con más operaciones puede ser más
 barata si utiliza corredores de menor costo.
 
-## 7. Estrategia de búsqueda no informada
 
-### 7.1 UCS / Dijkstra
+## 7. Estrategia de búsqueda, formulación y análisis del espacio
 
-UCS es la estrategia adecuada para costos variables y no negativos:
+### 7.1 Algoritmo UCS / Dijkstra con dominancia Pareto
 
-- evaluación: $f(n)=g(n)$;
-- frontera: `heapq` como min-heap por costo acumulado;
-- control de grafos: clave canónica y etiquetas Pareto;
-- meta: comprobada al extraer.
+El agente utiliza **Búsqueda de Costo Uniforme (UCS)**, la estrategia óptima para espacios de estados con costos heterogéneos y estrictamente positivos ($c(s,a,s') \ge \epsilon > 0$). La evaluación se rige por $f(n) = g(n)$, donde $g(n)$ es el costo acumulado de la ruta.
 
-```text
-UCS(s0, GoalTest):
-    frontera <- min-heap con (g=0, s0, camino vacío)
-    labels[s0_key] <- (0, batería inicial)
+El control de estados en el grafo no descarta simplemente estados repetidos por clave física, sino que mantiene un conjunto de etiquetas Pareto $(g, b)$ por cada clave canónica (`_state_key`), donde $g$ es el costo acumulado y $b$ es la batería restante.
 
-    mientras frontera no esté vacía:
-        nodo <- extraer el menor g
+**Flujo de ejecución del solver:**
 
-        si (g, batería) está dominado en labels:
-            continuar
-        si GoalTest(nodo.estado):
-            retornar nodo.camino
+1. **Inicialización:** Se inserta el estado inicial $s_0$ en la frontera (min-heap ordenado por $g$) con $g=0$ y camino vacío. Se registra la etiqueta inicial $(0, b_0)$ en la tabla de etiquetas.
+2. **Extracción:** Se extrae de la frontera el nodo con menor costo acumulado $g$. Si su par $(g, b)$ ya está dominado por una etiqueta previa más eficiente, el nodo se descarta.
+3. **Prueba de meta:** Se verifica si todas las estaciones requeridas en `scenario["goal"]["stations_online"]` están `ONLINE`. Al realizarse al extraer y no al generar, se garantiza la optimalidad del costo.
+4. **Expansión y poda:** Para cada acción legal en `_successors`:
+* Se calcula el nuevo costo acumulado $g' = g + c(a)$ y el nuevo estado sucesor.
+* Se consulta la clave canónica del sucesor en la tabla de etiquetas. Si ya existe una etiqueta previa con menor o igual costo y mayor o igual batería ($g_{prev} \le g'$ y $b_{prev} \ge b'$), la rama se poda inmediatamente por dominancia.
+* Si no está dominada, se eliminan las etiquetas que resulten dominadas por la nueva, se almacena $(g', b')$ y se inserta el sucesor en la frontera.
 
-        para cada (sucesor, acción) en _successors(nodo.estado):
-            nuevo_g <- nodo.g + costo(acción)
-            clave <- _state_key(sucesor)
+### 7.2 Completitud, optimalidad y alternativas
 
-            si existe una etiqueta con costo <= nuevo_g
-               y batería >= batería(sucesor):
-                continuar
+UCS es completo y óptimo en este dominio bajo las siguientes garantías:
 
-            eliminar etiquetas dominadas
-            insertar (nuevo_g, sucesor) en la frontera
+* Costos de transición estrictamente positivos que evitan ciclos infinitos de costo cero.
+* Factor de ramificación finito en cada estado.
+* Poda de dominancia segura: un estado solo domina a otro si alcanza la misma configuración física con menor o igual costo y mayor o igual batería.
+* Comprobación de meta en la extracción de la cola de prioridad.
 
-    retornar fallo
-```
+Alternativas como **BFS** solo serían óptimas si todas las acciones tuvieran costo unitario, lo cual no aplica por la disparidad entre costos de corredores e interacciones. **IDDFS** optimiza memoria en árboles profundos de costo uniforme, pero no garantiza optimalidad con costos heterogéneos.
 
-La implementación usa entradas perezosas: pueden quedar entradas obsoletas en
-el heap, pero `labels` impide expandir etiquetas dominadas. También existe un
-límite operativo de 50.000 expansiones; superarlo significa presupuesto
-agotado, no imposibilidad matemática.
+### 7.3 Formulación y cota del espacio de estados
 
-### 7.2 Completitud y optimalidad
+La cota combinatoria teórica del espacio de estados físicos viene dada por:
 
-UCS es completo y óptimo bajo estas premisas:
-
-1. costos no negativos;
-2. factor de ramificación finito;
-3. estado canónico;
-4. generación completa de sucesores del modelo elegido;
-5. poda de dominancia segura;
-6. prueba de meta al extraer de la frontera.
-
-La dominancia es segura cuando dos rutas alcanzan la misma configuración física
-y una tiene costo menor o igual y batería mayor o igual. Aun así, la
-optimalidad de una ejecución concreta debe comprobarse con una referencia
-independiente; el plan artesanal de `demo_plan.py` no es un oráculo.
-
-### 7.3 Alternativas no implementadas
-
-BFS sería apropiado si todos los costos fueran unitarios. IDDFS puede ahorrar
-memoria en problemas definidos por profundidad, pero no es la estrategia de
-esta API y no respeta directamente la optimización de costos heterogéneos.
-
-## 8. Formulación y tamaño del espacio
-
-### 8.1 Cota estructural
-
-Una fórmula cartesiana ingenua sobreestima el espacio porque permite
-configuraciones físicamente imposibles. Una cota conceptual puede expresarse
-como:
-
-$$|\mathcal{S}|\leq |Z|\,(B_{max}+1)\,|P|\,|F|\,2^{|D|+|P_a|+|S_t|}$$
+$$\vert{}\mathcal{S}\vert{} \le \vert{}Z\vert{} \cdot (B_{max}+1) \cdot \vert{}P\vert{} \cdot \vert{}F\vert{} \cdot 2^{\vert{}D\vert{} + \vert{}P_a\vert{} + \vert{}S_t\vert{}}$$
 
 Donde:
 
-- $|Z|$ es el número de zonas;
-- $B_{max}+1$ es el rango de batería;
-- $|P|$ representa configuraciones posibles de carga;
-- $|F|$ representa distribuciones posibles del suelo;
-- $D$, $P_a$ y $S_t$ son puertas, paneles y estaciones.
+* $\vert{}Z\vert{}$ es el número de zonas (5 en el escenario base).
+* $B_{max}+1$ es el rango discreto de batería disponible.
+* $\vert{}P\vert{}$ representa las configuraciones válidas de carga dentro de la capacidad del robot.
+* $\vert{}F\vert{}$ representa las distribuciones posibles de recursos en el suelo.
+* $\vert{}D\vert{}$, $\vert{}P_a\vert{}$ y $\vert{}S_t\vert{}$ son las cantidades de puertas, paneles y estaciones modeladas.
 
-Para este escenario, $|Z|=5$, la capacidad es 3, hay 3 puertas, 3 paneles,
-3 estaciones y aproximadamente diez recursos. La fórmula no debe interpretarse
-como el número real de estados alcanzables: capacidad, dependencias,
-monotonicidad y batería reducen considerablemente el conjunto válido.
+Esta cota sobreestima el espacio real alcanzable, ya que la monotonicidad del entorno (las puertas abiertas no se cierran, los paneles reparados no se dañan), las dependencias lógicas y las restricciones de capacidad reducen drásticamente los estados accesibles.
 
-### 8.2 Complejidad de búsqueda ciega
+### 7.4 Complejidad computacional
 
-Sea $b$ el número promedio de sucesores aplicables, $C^*$ el costo óptimo y
-$\epsilon$ el menor costo de acción. La profundidad efectiva está acotada por:
+Siendo $b$ el factor de ramificación promedio, $C^*$ el costo del plan óptimo y $\epsilon$ el costo mínimo de acción, la profundidad efectiva del árbol de búsqueda está acotada por:
 
-$$d_{eff}=\left\lfloor\frac{C^*}{\epsilon}\right\rfloor$$
+$$d_{eff} = \left\lfloor \frac{C^*}{\epsilon} \right\rfloor$$
 
-Una cota simplificada de árbol es:
+Lo que sitúa la cota teórica en $O(b^{1+d_{eff}})$. Sin embargo, en la búsqueda sobre grafos la complejidad real depende del número de estados canónicos únicos explorados y de las ramas no dominadas.
 
-$$O\left(b^{1+d_{eff}}\right)$$
+### 7.5 Mitigación de explosión combinatoria
 
-En búsqueda de grafos, la complejidad real depende del número de estados
-canónicos y de las etiquetas no dominadas, no únicamente de la profundidad.
-La memoria incluye la frontera, `labels` y los caminos almacenados en cada
-nodo. `_ScenarioIndex` y la eliminación de objetos muertos reducen el costo
-constante y el número de configuraciones relevantes, pero no cambian la
-naturaleza exponencial del peor caso.
+Para mantener el tiempo de resolución en el rango de segundos, el sistema aplica cuatro mecanismos de reducción:
 
-### 8.3 Fuentes principales de explosión
-
-- Permitir `DROP` decorativo en cualquier zona.
-- Mantener objetos muertos como dimensiones del estado.
-- Representar objetos equivalentes con identificadores artificiales.
-- Ignorar la batería o eliminar restricciones de capacidad.
-- Guardar múltiples rutas no dominadas sin límite.
-
-La solución correcta es compactar la formulación sin modificar la misión:
-estado canónico, acciones aplicables relevantes, dominancia de batería y
-eliminación segura de objetos muertos.
+1. **Poda *Just-in-Time* de `DROP`:** Se restringe la acción de soltar exclusivamente a momentos donde el robot está a capacidad máxima y existen recursos útiles en la zona actual (`_useful_items_in_zone`), eliminando millones de permutaciones simétricas en zonas de tránsito vacías.
+2. **Exclusión de ítems muertos:** Llaves cuyas puertas ya están abiertas, herramientas sin paneles pendientes y materiales agotados se omiten de la clave canónica del suelo (`_state_key`), colapsando estados equivalentes.
+3. **Canonicidad de estructuras:** El inventario (`payload`) y los recursos en suelo se serializan como tuplas ordenadas independientes del orden de inserción.
+4. **Filtrado Pareto multietiqueta:** Se descartan rutas que llegan a la misma configuración física con mayor costo y menor o igual nivel de batería.

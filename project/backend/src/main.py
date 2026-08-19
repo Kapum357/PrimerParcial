@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import heapq
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -23,7 +24,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-SCENARIO_PATH = Path(__file__).resolve().parents[2] / "scenarios" / "scenario.json"
+SCENARIO_PATH = Path(__file__).resolve().parent.parent.parent / "scenarios" / "scenario.json"
 
 
 def _load_default_scenario() -> dict[str, Any]:
@@ -58,32 +59,193 @@ def _has(state: dict[str, Any], item_id: str | None = None, item_type: str | Non
     )
 
 
-def _is_dead_item(
-    item: dict[str, Any], state: dict[str, Any], index: "_ScenarioIndex"
+# --- Clasificación y detección atómica de items muertos ---
+
+def _is_dead_key(
+    item: dict[str, Any], state: dict[str, Any], index: _ScenarioIndex
 ) -> bool:
-    """Return whether an item can no longer enable any future action."""
-    if item.get("kind") == "key":
-        return any(
-            door["key"] == item.get("id") and state["doors"][door_id] == "OPEN"
-            for door_id, door in index.doors_by_id.items()
-        )
-    if item.get("kind") == "tool":
-        return not any(
-            state["panels"][panel_id] == "DAMAGED"
-            and panel["requires"]["tool"] == item.get("id")
-            for panel_id, panel in index.panels_by_id.items()
-        )
-    if item.get("kind") == "material":
-        return not any(
-            state["panels"][panel_id] == "DAMAGED"
-            and panel["requires"]["material"] == item.get("type")
-            for panel_id, panel in index.panels_by_id.items()
-        )
+    """Una llave está muerta si no queda ninguna puerta cerrada que la requiera."""
+    key_id = item.get("id")
+    return not any(
+        door.get("key") == key_id and state["doors"].get(door_id) != "OPEN"
+        for door_id, door in index.doors_by_id.items()
+    )
+
+
+def _is_dead_tool(
+    item: dict[str, Any], state: dict[str, Any], index: _ScenarioIndex
+) -> bool:
+    """Una herramienta está muerta si ningún panel dañado la requiere."""
+    tool_id = item.get("id")
+    return not any(
+        state["panels"].get(panel_id) == "DAMAGED"
+        and panel.get("requires", {}).get("tool") == tool_id
+        for panel_id, panel in index.panels_by_id.items()
+    )
+
+
+def _is_dead_material(
+    item: dict[str, Any], state: dict[str, Any], index: _ScenarioIndex
+) -> bool:
+    """Un material está muerto si ningún panel dañado requiere este tipo."""
+    mat_type = item.get("type")
+    return not any(
+        state["panels"].get(panel_id) == "DAMAGED"
+        and panel.get("requires", {}).get("material") == mat_type
+        for panel_id, panel in index.panels_by_id.items()
+    )
+
+
+def _is_dead_item(
+    item: dict[str, Any], state: dict[str, Any], index: _ScenarioIndex
+) -> bool:
+    """Wrapper para compatibilidad con _state_key y filtros de suelo."""
+    kind = item.get("kind")
+    if kind == "key":
+        return _is_dead_key(item, state, index)
+    if kind == "tool":
+        return _is_dead_tool(item, state, index)
+    if kind == "material":
+        return _is_dead_material(item, state, index)
     return False
 
 
+def _classify_payload_items(
+    state: dict[str, Any], index: _ScenarioIndex
+) -> dict[str, list[tuple[int, dict[str, Any]]]]:
+    """Clasifica los items del payload en dead_keys, dead_tools, dead_materials y alive."""
+    dead_keys: list[tuple[int, dict[str, Any]]] = []
+    dead_tools: list[tuple[int, dict[str, Any]]] = []
+    dead_materials: list[tuple[int, dict[str, Any]]] = []
+    alive: list[tuple[int, dict[str, Any]]] = []
+
+    for idx, item in enumerate(state.get("payload", [])):
+        kind = item.get("kind")
+        if kind == "key":
+            (dead_keys if _is_dead_key(item, state, index) else alive).append((idx, item))
+        elif kind == "tool":
+            (dead_tools if _is_dead_tool(item, state, index) else alive).append((idx, item))
+        elif kind == "material":
+            (dead_materials if _is_dead_material(item, state, index) else alive).append((idx, item))
+        else:
+            alive.append((idx, item))
+
+    return {
+        "dead_keys": dead_keys,
+        "dead_tools": dead_tools,
+        "dead_materials": dead_materials,
+        "alive": alive,
+    }
+
+
+# --- Helpers de utilidad y distancias de zonas ---
+
+def _useful_items_in_zone(state: dict[str, Any], zone: str) -> set[tuple[str, str]]:
+    """Items en el suelo de 'zone' que aún tienen utilidad y pueden recogerse."""
+    useful: set[tuple[str, str]] = set()
+    useful.update(
+        ("key", item_id)
+        for item_id, item_zone in state.get("ground_keys", {}).items()
+        if item_zone == zone
+    )
+    useful.update(
+        ("tool", item_id)
+        for item_id, item_zone in state.get("ground_tools", {}).items()
+        if item_zone == zone
+    )
+    useful.update(
+        ("material", item_type)
+        for item_type, material in state.get("ground_materials", {}).items()
+        if material.get("zone") == zone and material.get("count", 0) > 0
+    )
+    return useful
+
+
+def _get_zone_distance(z1: str, z2: str, index: _ScenarioIndex) -> int:
+    """Distancia mínima en saltos entre zonas vía BFS."""
+    if z1 == z2:
+        return 0
+    visited = {z1}
+    queue: deque[tuple[str, int]] = deque([(z1, 0)])
+    while queue:
+        curr, dist = queue.popleft()
+        if curr == z2:
+            return dist
+        for corridor in index.corridors_by_zone.get(curr, ()):
+            nxt = corridor.get("to")
+            if nxt and nxt not in visited:
+                visited.add(nxt)
+                queue.append((nxt, dist + 1))
+    return 999
+
+
+def _sort_by_utility(
+    alive_items: list[tuple[int, dict[str, Any]]],
+    state: dict[str, Any],
+    index: _ScenarioIndex,
+    current_zone: str,
+) -> list[tuple[int, dict[str, Any]]]:
+    """Ordena items vivos de menor a mayor urgencia para guiar la poda."""
+    def utility_score(entry: tuple[int, dict[str, Any]]) -> float:
+        _, item = entry
+        kind = item.get("kind")
+        if kind == "key":
+            key_id = item.get("id")
+            closed_doors = [
+                d for d in index.doors_by_id.values()
+                if d.get("key") == key_id and state["doors"].get(d["id"]) != "OPEN"
+            ]
+            if not closed_doors:
+                return 0.0
+            return float(min(
+                min(_get_zone_distance(current_zone, z, index) for z in d.get("between", [current_zone]))
+                for d in closed_doors
+            ))
+        if kind == "tool":
+            tool_id = item.get("id")
+            needed_panels = [
+                p for p in index.panels_by_id.values()
+                if p.get("requires", {}).get("tool") == tool_id and state["panels"].get(p["id"]) == "DAMAGED"
+            ]
+            return float(len(needed_panels) * 10)
+        if kind == "material":
+            mat_type = item.get("type")
+            needed_panels = [
+                p for p in index.panels_by_id.values()
+                if p.get("requires", {}).get("material") == mat_type and state["panels"].get(p["id"]) == "DAMAGED"
+            ]
+            return float(len(needed_panels) * 10)
+        return 100.0
+
+    return sorted(alive_items, key=utility_score)
+
+
+def _drop_candidates(
+    scenario: dict[str, Any], state: dict[str, Any], index: _ScenarioIndex
+) -> list[tuple[int, dict[str, Any]]]:
+    """Genera candidatos a soltar: muertos preferidos, vivos ordenados por utilidad solo a capacidad."""
+    # 1. Filtro de capacidad
+    if _weight(state) < scenario.get("robot", {}).get("cargo_capacity", 0):
+        return []
+
+    # 2. Filtro de zona útil (evita explosión en zonas vacías)
+    useful_here = _useful_items_in_zone(state, state["zone"])
+    if not useful_here:
+        return []
+
+    classified = _classify_payload_items(state, index)
+    all_dead = classified["dead_keys"] + classified["dead_tools"] + classified["dead_materials"]
+
+    # 3. Preferencia: si hay muertos, soltar muertos
+    if all_dead:
+        return all_dead
+
+    # 4. Si no hay muertos y estamos a capacidad, soltar el vivo menos urgente
+    return _sort_by_utility(classified["alive"], state, index, state["zone"])
+
+
 def _state_key(
-    state: dict[str, Any], index: "_ScenarioIndex"
+    state: dict[str, Any], index: _ScenarioIndex
 ) -> tuple[Any, ...]:
     payload = tuple(
         sorted((item["kind"], item.get("id") or item.get("type")) for item in state["payload"])
@@ -102,17 +264,19 @@ def _state_key(
         if not _is_dead_item(item, state, index):
             floor.setdefault(material["zone"], {})[("material", item_type)] = material["count"]
     floor_key = tuple((zone, tuple(sorted(items.items()))) for zone, items in sorted(floor.items()))
-    return (state["zone"], payload, floor_key, tuple(sorted(state["doors"].items())), tuple(sorted(state["panels"].items())), tuple(sorted(state["stations"].items())))
+    return (
+        state["zone"],
+        payload,
+        floor_key,
+        tuple(sorted(state["doors"].items())),
+        tuple(sorted(state["panels"].items())),
+        tuple(sorted(state["stations"].items())),
+    )
 
 
 @dataclass(frozen=True)
 class _ScenarioIndex:
-    """Immutable lookup tables for static scenario data.
-
-    The index avoids repeated linear scans while expanding UCS nodes.  It is
-    deliberately separate from the mutable world state: scenario constants
-    are shared by every successor and never copied.
-    """
+    """Lookup tables inmutables para datos estáticos del escenario."""
 
     corridors_by_zone: dict[str, tuple[dict[str, Any], ...]]
     keys_by_id: dict[str, dict[str, Any]]
@@ -137,7 +301,7 @@ def _scenario_index(scenario: dict[str, Any]) -> _ScenarioIndex:
 
 
 def _clone_state(state: dict[str, Any]) -> dict[str, Any]:
-    """Copy only the state containers that successor generation may mutate."""
+    """Copia únicamente las estructuras de estado que las transiciones pueden mutar."""
     return {
         **state,
         "payload": list(state["payload"]),
@@ -151,72 +315,6 @@ def _clone_state(state: dict[str, Any]) -> dict[str, Any]:
             for item_type, material in state["ground_materials"].items()
         },
     }
-
-
-def _drop_candidates(
-    scenario: dict[str, Any], state: dict[str, Any], index: _ScenarioIndex
-) -> list[tuple[int, dict[str, Any]]]:
-    """Return only payload items whose removal can enable useful progress.
-
-    DROP is not generated as a free relocation action.  It is considered only
-    at capacity and only when a useful item is available in the current zone.
-    Dead items are preferred; otherwise all payload choices are retained so a
-    necessary capacity decision cannot be lost.
-    """
-    if _weight(state) < scenario["robot"]["cargo_capacity"]:
-        return []
-
-    useful_items: set[tuple[str, str]] = set()
-    useful_items.update(
-        ("key", item_id)
-        for item_id, zone in state["ground_keys"].items()
-        if zone == state["zone"]
-    )
-    useful_items.update(
-        ("tool", item_id)
-        for item_id, zone in state["ground_tools"].items()
-        if zone == state["zone"]
-    )
-    useful_items.update(
-        ("material", item_type)
-        for item_type, material in state["ground_materials"].items()
-        if material["zone"] == state["zone"] and material["count"] > 0
-    )
-    if not useful_items:
-        return []
-
-    dead: list[tuple[int, dict[str, Any]]] = []
-    for item_index, item in enumerate(state["payload"]):
-        if item.get("kind") == "key":
-            door_is_open = any(
-                door["key"] == item.get("id")
-                and state["doors"][door_id] == "OPEN"
-                for door_id, door in index.doors_by_id.items()
-            )
-            if door_is_open:
-                dead.append((item_index, item))
-        elif item.get("kind") == "tool":
-            still_needed = any(
-                state["panels"][panel_id] == "DAMAGED"
-                and panel["requires"]["tool"] == item.get("id")
-                for panel_id, panel in index.panels_by_id.items()
-            )
-            if not still_needed:
-                dead.append((item_index, item))
-        elif item.get("kind") == "material":
-            still_needed = any(
-                state["panels"][panel_id] == "DAMAGED"
-                and panel["requires"]["material"] == item.get("type")
-                for panel_id, panel in index.panels_by_id.items()
-            )
-            if not still_needed:
-                dead.append((item_index, item))
-    return dead
-
-
-def _action_costs(scenario: dict[str, Any]) -> dict[str, int]:
-    configured = scenario.get("action_costs", {})
-    return {name: int(configured.get(name, default)) for name, default in (("pickup", 1), ("drop", 1), ("interact", 2), ("recharge", 3))}
 
 
 def _failure_result(message: str = "FAILURE") -> dict[str, Any]:
@@ -247,7 +345,7 @@ def _move_successors(
     for corridor in scenario_index.corridors_by_zone.get(zone, ()):
         door = corridor.get("door")
         cost = int(corridor["cost"])
-        if (door and state["doors"][door] != "OPEN") or state["battery"] < cost:
+        if (door and state["doors"].get(door) != "OPEN") or state["battery"] < cost:
             continue
         next_state = _clone_state(state)
         _spend(next_state, cost)
@@ -312,7 +410,7 @@ def _door_successors(
     zone = state["zone"]
     result: list[tuple[dict[str, Any], dict[str, Any]]] = []
     for door_id, door in scenario_index.doors_by_id.items():
-        if state["doors"][door_id] == "OPEN" or zone not in door["between"] or not _has(state, item_id=door["key"]):
+        if state["doors"].get(door_id) == "OPEN" or zone not in door["between"] or not _has(state, item_id=door["key"]):
             continue
         if state["battery"] < costs["interact"]:
             continue
@@ -333,7 +431,7 @@ def _panel_successors(
     for panel in scenario_index.panels_by_id.values():
         required = panel["requires"]
         if (
-            state["panels"][panel["id"]] != "DAMAGED"
+            state["panels"].get(panel["id"]) != "DAMAGED"
             or zone != panel["zone"]
             or not _has(state, item_id=required["tool"])
             or not _has(state, item_type=required["material"])
@@ -343,8 +441,8 @@ def _panel_successors(
             continue
         next_state = _clone_state(state)
         _spend(next_state, costs["interact"])
-        index = next(i for i, item in enumerate(next_state["payload"]) if item.get("type") == required["material"])
-        next_state["payload"].pop(index)
+        idx = next(i for i, item in enumerate(next_state["payload"]) if item.get("type") == required["material"])
+        next_state["payload"].pop(idx)
         next_state["panels"][panel["id"]] = "OK"
         result.append((next_state, {"op": "INTERACT", "target": panel["id"], "action": "REPAIR", "consumes": required["material"], "cost": costs["interact"]}))
     return result
@@ -359,8 +457,11 @@ def _station_successors(
     result: list[tuple[dict[str, Any], dict[str, Any]]] = []
     for station_id, station in scenario_index.stations_by_id.items():
         requirements = station.get("requires", {})
-        ready = all(state["panels"][pid] == "OK" for pid in requirements.get("panels_ok", [])) and all(state["stations"][sid] == "ONLINE" for sid in requirements.get("stations_online", []))
-        if state["stations"][station["id"]] != "OFFLINE" or zone != station["zone"] or not ready or state["battery"] < costs["interact"]:
+        ready = (
+            all(state["panels"].get(pid) == "OK" for pid in requirements.get("panels_ok", []))
+            and all(state["stations"].get(sid) == "ONLINE" for sid in requirements.get("stations_online", []))
+        )
+        if state["stations"].get(station["id"]) != "OFFLINE" or zone != station["zone"] or not ready or state["battery"] < costs["interact"]:
             continue
         next_state = _clone_state(state)
         _spend(next_state, costs["interact"])
@@ -418,7 +519,13 @@ def _drop_successors(
 def _successors(
     scenario: dict[str, Any], state: dict[str, Any], scenario_index: _ScenarioIndex
 ) -> list[tuple[dict[str, Any], dict[str, Any]]]:
-    costs = _action_costs(scenario)
+    configured_costs = scenario.get("action_costs", {})
+    costs = {
+        "pickup": int(configured_costs.get("pickup", 1)),
+        "drop": int(configured_costs.get("drop", 1)),
+        "interact": int(configured_costs.get("interact", 2)),
+        "recharge": int(configured_costs.get("recharge", 3)),
+    }
     result: list[tuple[dict[str, Any], dict[str, Any]]] = []
     result.extend(_move_successors(state, scenario_index))
     result.extend(_pickup_successors(scenario, state, scenario_index, costs))
@@ -439,16 +546,11 @@ def solve_agent(scenario: dict[str, Any]) -> dict[str, Any]:
         start_key: [(0, start["battery"])]
     }
     counter = 1
-    expansions = 0
-    expansion_limit = 50000
     while frontier:
-        expansions += 1
-        if expansions > expansion_limit:
-            return _failure_result("Search budget exhausted without finding a solution")
         path_cost, _, key, state, path = heapq.heappop(frontier)
         if (path_cost, state["battery"]) not in labels.get(key, []):
             continue
-        if all(state["stations"][sid] == "ONLINE" for sid in scenario["goal"]["stations_online"]):
+        if all(state["stations"].get(sid) == "ONLINE" for sid in scenario["goal"]["stations_online"]):
             return _success_result(path_cost, path)
         for next_state, action in _successors(scenario, state, scenario_index):
             next_cost = path_cost + int(action["cost"])
