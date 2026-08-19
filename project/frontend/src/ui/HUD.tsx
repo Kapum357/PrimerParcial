@@ -151,6 +151,7 @@ export function BottomControls({
       </button>
       <button
         className="btn btn-secondary"
+        type="button"
         onClick={() => {
           setRunning(false)
           onReset()

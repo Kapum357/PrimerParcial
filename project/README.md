@@ -23,7 +23,7 @@ Abre **dos terminales**.
 ### Terminal 1 — Backend
 
 ```bash
-cd project/backend
+cd /backend
 pip install -r requirements.txt
 py -m uvicorn src.main:app --reload
 ```
@@ -33,7 +33,7 @@ Comprobar: http://127.0.0.1:8000/api/health
 ### Terminal 2 — Frontend
 
 ```bash
-cd project/frontend
+cd /frontend
 npm install
 npm run dev
 ```
@@ -47,7 +47,7 @@ Hasta que conecte su agente, `/api/solve` devuelve el plan artesanal de `demo_pl
 ### Tests del plan demo
 
 ```bash
-cd project/backend
+cd /backend
 py -m pytest tests/main_test.py
 ```
 

@@ -179,109 +179,118 @@ del plan. Representa las fases operativas del
 robot mientras ejecuta la secuencia de acciones devuelta por el solver.
 
 ```mermaid
----
-config:
-  layout: elk
----
 stateDiagram-v2
-    [*] --> 📥_CargandoPlan : Recibe la lista de pasos del planificador
 
-    state 📥_CargandoPlan {
-        [*] --> 📝_GuardarPasos : Guardar instrucciones en memoria
-        📝_GuardarPasos --> 🔢_IniciarContador : Empezar en el paso 1
-        🔢_IniciarContador --> [*] : Robot listo para actuar
+    [*] --> CARGAR_PLAN
+    CARGAR_PLAN --> DESPACHAR_PASO : STATUS_READY
+
+    state CARGAR_PLAN {
+        [*] --> INIT_BUFFER
+        INIT_BUFFER --> INIT_PTR : buffer = list(plan)
+        INIT_PTR --> READY : i = 0 , s = read_telemetry()
+        READY --> [*]
     }
 
-    📥_CargandoPlan --> 🔍_RevisandoPaso : Iniciar recorrido
-
-    state 🔍_RevisandoPaso {
-        [*] --> 📖_LeerPasoActual : Identificar qué acción toca hacer
-        📖_LeerPasoActual --> 🛡️_VerificarEntorno : Confirmar que el camino y el robot están listos
-        🛡️_VerificarEntorno --> [*]
+    state DESPACHAR_PASO {
+        [*] --> FETCH_ACCION
+        FETCH_ACCION --> EVAL_PRECONDICIONES<br/>_Y_VALIDACION
+        EVAL_PRECONDICIONES<br/>_Y_VALIDACION --> [*]
     }
 
-    🔍_RevisandoPaso --> ⚙️_RealizandoAccion : [Todo listo para avanzar]
-    🔍_RevisandoPaso --> ⚠️_DetectarFalloPrevio : [El entorno no coincide con lo esperado]
+    DESPACHAR_PASO --> EJECUTAR_ACCION : is_valid
+    DESPACHAR_PASO --> EXCEPCION_PRECONDICION : !is_valid
 
-    state ⚙️_RealizandoAccion {
-        [*] --> 🔀_IdentificarTipoTarea : ¿Qué tarea corresponde?
+    state EJECUTAR_ACCION {
 
-        🔀_IdentificarTipoTarea --> 🚜_Desplazamiento : Tarea de Movimiento
-        🔀_IdentificarTipoTarea --> 🦾_ManejoMaterial : Tarea de Recoger o Entregar
-        🔀_IdentificarTipoTarea --> 🔋_CargaEnergia : Tarea de Recarga
-        🔀_IdentificarTipoTarea --> 🔘_UsoInterruptor : Tarea de Accionar Puerta/Botón
+        [*] --> SWITCH_TIPO_ACCION
 
-        state 🚜_Desplazamiento {
-            [*] --> 🗺️_TrazarRutaLocal : Calcular camino corto
-            🗺️_TrazarRutaLocal --> 🏎️_MoverRuedas : Activar motores
-            🏎️_MoverRuedas --> 📡_SensorAnticolision : Sensores vigilando el frente
-            📡_SensorAnticolision --> 🏁_LlegadaACelda : Posición alcanzada
-            LlegadaACelda --> [*]
+        SWITCH_TIPO_ACCION --> MOVER : MOVE
+        SWITCH_TIPO_ACCION --> MANIPULAR : PICK_OR_DROP
+        SWITCH_TIPO_ACCION --> RECARGAR : RECHARGE
+        SWITCH_TIPO_ACCION --> INTERRUPTOR : TOGGLE_SWITCH
+
+        state MOVER {
+            [*] --> CALC_TRAYECTORIA
+            CALC_TRAYECTORIA --> ACCIONAR_MOTORES
+            ACCIONAR_MOTORES --> CHECK_RADAR
+            CHECK_RADAR --> ACTUALIZAR_MOVER
+            ACTUALIZAR_MOVER --> [*]
         }
 
-        state 🦾_ManejoMaterial {
-            [*] --> 🎯_AlinearBrazo : Orientar la pinza hacia el objeto
-            🎯_AlinearBrazo --> 🤏_AccionarGarra : Agarrar o soltar el objeto
-            AccionarGarra --> 📦_ConfirmarCarga : Comprobar peso/sensor
-            📦_ConfirmarCarga --> [*]
+        state MANIPULAR {
+            [*] --> ALINEAR_GRIPPER
+            ALINEAR_GRIPPER --> TOGGLE_GRIPPER
+            TOGGLE_GRIPPER --> UPDATE_INVENTORY
+            UPDATE_INVENTORY --> [*]
         }
 
-        state 🔋_CargaEnergia {
-            [*] --> 🔌_ConectarEstacion : Acoplarse al enchufe de carga
-            🔌_ConectarEstacion --> ⚡_LlenarBateria : Recibir electricidad
-            ⚡_LlenarBateria --> 🔓_DesconectarEstacion : Batería al 100%
-            🔓_DesconectarEstacion --> [*]
+        state RECARGAR {
+            [*] --> DOCK_STATION
+            DOCK_STATION --> DRAW_POWER
+            DRAW_POWER --> UNDOCK_STATION
+            UNDOCK_STATION --> [*]
         }
 
-        state 🔘_UsoInterruptor {
-            [*] --> 👆_PresionarBoton : Tocar interruptor
-            👆_PresionarBoton --> 🚪_ConfirmarCambio : Verificar apertura de paso
-            🚪_ConfirmarCambio --> [*]
+        state INTERRUPTOR {
+            [*] --> CONTACT_SWITCH
+            CONTACT_SWITCH --> TOGGLE_ZONE
+            TOGGLE_ZONE --> [*]
         }
 
-        🚜_Desplazamiento --> 📊_ValidarResultadoPaso : Movimiento finalizado
-        🦾_ManejoMaterial --> 📊_ValidarResultadoPaso : Objeto manipulado
-        🔋_CargaEnergia --> 📊_ValidarResultadoPaso : Batería recargada
-        🔘_UsoInterruptor --> 📊_ValidarResultadoPaso : Interruptor accionado
+        MOVER --> VERIFICAR_TRANSICION
+        MANIPULAR --> VERIFICAR_TRANSICION
+        RECARGAR --> VERIFICAR_TRANSICION
+        INTERRUPTOR --> VERIFICAR_TRANSICION
 
-        state 📊_ValidarResultadoPaso {
-            [*] --> 👁️_SensorConfirmacion : Revisar con sensores que todo salió bien
-            👁️_SensorConfirmacion --> [*]
+        state VERIFICAR_TRANSICION {
+            [*] --> READ_TELEMETRY
+            READ_TELEMETRY --> ASSERT_EFFECTS
+            ASSERT_EFFECTS --> [*]
         }
     }
 
-    ⚙️_RealizandoAccion --> 🔄_EvaluandoSiguienteAccion : [Paso completado con éxito]
-    ⚙️_RealizandoAccion --> 🚫_BloqueoEnCamino : [Obstáculo inesperado en el camino]
+    EJECUTAR_ACCION --> EVALUAR_CONTINUIDAD : transicion_valida
+    EJECUTAR_ACCION --> EXCEPCION_OBSTACULO : obstacle
 
-    state 🔄_EvaluandoSiguienteAccion {
-        [*] --> ➕_AvanzarContador : Sumar 1 al paso actual
-        ➕_AvanzarContador --> ❓_QuedanMasPasos : ¿Faltan acciones por hacer?
-        ❓_QuedanMasPasos --> [*]
+    state EVALUAR_CONTINUIDAD {
+        [*] --> INCREMENTAR_INDICE
+        INCREMENTAR_INDICE --> CHECK_FIN_LISTA
+        CHECK_FIN_LISTA --> [*]
     }
 
-    🔄_EvaluandoSiguienteAccion --> 🔍_RevisandoPaso : [Sí: pasar al siguiente paso]
-    🔄_EvaluandoSiguienteAccion --> 🏁_RevisionMetaFinal : [No: se ejecutaron todos los pasos]
+    EVALUAR_CONTINUIDAD --> DESPACHAR_PASO : has_next
+    EVALUAR_CONTINUIDAD --> VERIFICAR_META_FINAL : fin_lista
 
-    state 🏁_RevisionMetaFinal {
-        [*] --> 🎯_ComprobarObjetivoCumplido : ¿Se logró la meta completa?
-        🎯_ComprobarObjetivoCumplido --> [*]
+    state VERIFICAR_META_FINAL {
+        [*] --> RUN_GOAL_TEST
+        RUN_GOAL_TEST --> [*]
     }
 
-    🏁_RevisionMetaFinal --> 🏆_MisionCompletada : [Objetivo alcanzado con éxito]
-    🏁_RevisionMetaFinal --> ❌_MetaIncompleta : [Falta algún requisito para la meta]
+    VERIFICAR_META_FINAL --> EXIT_SUCCESS : is_goal
+    VERIFICAR_META_FINAL --> EXCEPCION_META_FALLIDA : !is_goal
 
-    state 🛑_ManejoDeImprevistos {
-        ⚠️_DetectarFalloPrevio --> 🛑_FrenarRobot : Detener motores de forma segura
-        🚫_BloqueoEnCamino --> 🛑_FrenarRobot : Freno inmediato por obstáculo
-        ❌_MetaIncompleta --> 🛑_FrenarRobot : Detener por resultado incompleto
-        🛑_FrenarRobot --> 📡_EnviarAlertaYEstado : Informar al planificador qué pasó
-        📡_EnviarAlertaYEstado --> [*]
+    state MANEJO_EXCEPCIONES {
+
+        [*] --> STOP_ACTUATORS
+
+        STOP_ACTUATORS --> TRIGGER_REPLAN
+        TRIGGER_REPLAN --> [*]
     }
 
-    🛑_ManejoDeImprevistos --> [*] : El planificador crea un nuevo plan adaptado
+    EXCEPCION_PRECONDICION --> MANEJO_EXCEPCIONES
+    EXCEPCION_OBSTACULO --> MANEJO_EXCEPCIONES
+    EXCEPCION_META_FALLIDA --> MANEJO_EXCEPCIONES
 
-    🏆_MisionCompletada --> ⏳_EnReposo : Avisar al usuario y descansar
-    ⏳_EnReposo --> [*] : En espera de una nueva misión
+    MANEJO_EXCEPCIONES --> DESPACHAR_PASO : replan
+
+    EXIT_SUCCESS --> IDLE
+
+    state IDLE {
+        [*] --> WAIT_EVENT
+        WAIT_EVENT --> [*]
+    }
+
+    IDLE --> [*]
 ```
 
 ## 5. Prueba de meta ($\mathcal{G}$)

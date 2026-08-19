@@ -1,6 +1,8 @@
+@import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;600;700;800&family=Source+Serif+4:wght@400;600&display=swap');
+
 :root {
   color-scheme: dark;
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-family: 'Hanken Grotesk', ui-monospace, monospace;
   background: #0b1220;
 }
 

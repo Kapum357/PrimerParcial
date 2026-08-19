@@ -224,9 +224,8 @@ Acciones `INTERACT` permitidas (según `CONTRATO.md`):
 
 ```powershell
 # Desde el directorio del backend
-cd PrimerParcial\project\backend
-.\.venv\Scripts\activate
-python tests\test_demo_plan.py
+cd project/backend
+py -m pytest tests/main_test.py
 ```
 
 Las pruebas validan:

@@ -1,8 +1,130 @@
+@import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;600;700;800&family=Source+Serif+4:wght@400;600&display=swap');
+
+:root {
+  /* Colors */
+  --color-surface: #f9f9f9;
+  --color-surface-dim: #dadada;
+  --color-surface-bright: #f9f9f9;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-low: #f3f3f4;
+  --color-surface-container: #eeeeee;
+  --color-surface-container-high: #e8e8e8;
+  --color-surface-container-highest: #e2e2e2;
+  --color-on-surface: #1a1c1c;
+  --color-on-surface-variant: #454651;
+  --color-inverse-surface: #2f3131;
+  --color-inverse-on-surface: #f0f1f1;
+  --color-outline: #757682;
+  --color-outline-variant: #c5c5d2;
+  --color-surface-tint: #475aa2;
+  --color-primary: #000a33;
+  --color-on-primary: #ffffff;
+  --color-primary-container: #001c64; /* Institutional Navy */
+  --color-on-primary-container: #7487d2;
+  --color-inverse-primary: #b7c4ff;
+  --color-secondary: #00658d; /* Academic Sky Blue */
+  --color-on-secondary: #ffffff;
+  --color-secondary-container: #55c3ff;
+  --color-on-secondary-container: #004f6f;
+  --color-tertiary: #100f03; /* Warmth */
+  --color-on-tertiary: #ffffff;
+  --color-tertiary-container: #262414;
+  --color-on-tertiary-container: #8f8b75;
+  --color-error: #ba1a1a;
+  --color-on-error: #ffffff;
+  --color-error-container: #ffdad6;
+  --color-on-error-container: #93000a;
+  --color-primary-fixed: #dce1ff;
+  --color-primary-fixed-dim: #b7c4ff;
+  --color-on-primary-fixed: #001551;
+  --color-on-primary-fixed-variant: #2e4288;
+  --color-secondary-fixed: #c6e7ff;
+  --color-secondary-fixed-dim: #82cfff;
+  --color-on-secondary-fixed: #001e2d;
+  --color-on-secondary-fixed-variant: #004c6b;
+  --color-tertiary-fixed: #e8e3ca;
+  --color-tertiary-fixed-dim: #cbc7af;
+  --color-on-tertiary-fixed: #1d1c0d;
+  --color-on-tertiary-fixed-variant: #494735;
+  --color-background: #f9f9f9;
+  --color-on-background: #1a1c1c;
+  --color-surface-variant: #e2e2e2;
+  --color-surface-alt: #E0EDFF; /* Soft blue tint for section backgrounds */
+  --color-ink-primary: #000B26;
+  --color-ink-secondary: #4A5568;
+  
+  /* Typography */
+  --font-display-lg-family: 'Hanken Grotesk', sans-serif;
+  --font-display-lg-size: 48px;
+  --font-display-lg-weight: '800';
+  --font-display-lg-line-height: 56px;
+  --font-display-lg-letter-spacing: -0.02em;
+  
+  --font-headline-lg-family: 'Hanken Grotesk', sans-serif;
+  --font-headline-lg-size: 32px;
+  --font-headline-lg-weight: '700';
+  --font-headline-lg-line-height: 40px;
+  
+  --font-headline-lg-mobile-family: 'Hanken Grotesk', sans-serif;
+  --font-headline-lg-mobile-size: 28px;
+  --font-headline-lg-mobile-weight: '700';
+  --font-headline-lg-mobile-line-height: 36px;
+  
+  --font-headline-md-family: 'Hanken Grotesk', sans-serif;
+  --font-headline-md-size: 24px;
+  --font-headline-md-weight: '600';
+  --font-headline-md-line-height: 32px;
+  
+  --font-body-lg-family: 'Source Serif 4', serif;
+  --font-body-lg-size: 18px;
+  --font-body-lg-weight: '400';
+  --font-body-lg-line-height: 28px;
+  
+  --font-body-md-family: 'Source Serif 4', serif;
+  --font-body-md-size: 16px;
+  --font-body-md-weight: '400';
+  --font-body-md-line-height: 24px;
+  
+  --font-label-md-family: 'Hanken Grotesk', sans-serif;
+  --font-label-md-size: 14px;
+  --font-label-md-weight: '600';
+  --font-label-md-line-height: 20px;
+  
+  --font-caption-family: 'Hanken Grotesk', sans-serif;
+  --font-caption-size: 12px;
+  --font-caption-weight: '400';
+  --font-caption-line-height: 16px;
+  
+  /* Rounded corners */
+  --radius-sm: 0.125rem;
+  --radius-default: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-full: 9999px;
+  
+  /* Spacing */
+  --spacing-base: 8px;
+  --spacing-container-margin-mobile: 16px;
+  --spacing-container-margin-desktop: 64px;
+  --spacing-gutter: 16px;
+  --spacing-stack-sm: 12px;
+  --spacing-stack-md: 24px;
+  --spacing-stack-lg: 48px;
+  
+  /* Elevation */
+  --shadow-soft-ambient: 0px 4px 20px rgba(0, 28, 100, 0.08); /* Navy-tinted soft ambient */
+  --shadow-modal: 0px 4px 20px rgba(0, 28, 100, 0.08);
+}
+
+/* ============================================
+   Component Styles using DESIGN.md tokens
+   ============================================ */
+
 .app-shell {
   position: relative;
   width: 100%;
   height: 100%;
-  background: #0b1220;
+  background: var(--color-background, #0b1220);
 }
 
 .viewport {
@@ -35,12 +157,12 @@
 
 .hud-panel {
   pointer-events: auto;
-  background: rgba(15, 23, 42, 0.88);
+  background: rgba(var(--color-on-surface-rgb, 15, 23, 42), 0.88);
   border: 1px solid rgba(34, 211, 238, 0.25);
-  border-radius: 12px;
-  padding: 12px 14px;
+  border-radius: var(--radius-md, 0.375rem);
+  padding: var(--spacing-gutter, 16px) var(--spacing-gutter, 14px);
   backdrop-filter: blur(8px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-soft-ambient);
 }
 
 .hud-panel-title {
@@ -53,10 +175,10 @@
 
 .brand {
   pointer-events: auto;
-  background: rgba(15, 23, 42, 0.92);
+  background: rgba(var(--color-on-surface-rgb, 15, 23, 42), 0.92);
   border: 1px solid rgba(34, 211, 238, 0.35);
-  border-radius: 12px;
-  padding: 14px;
+  border-radius: var(--radius-md, 0.375rem);
+  padding: var(--spacing-gutter, 14px);
 }
 
 .brand-kicker {
@@ -77,14 +199,14 @@
 .battery-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--spacing-stack-sm, 12px);
 }
 
 .battery-track {
   flex: 1;
   height: 12px;
   background: #1e293b;
-  border-radius: 999px;
+  border-radius: var(--radius-full, 999px);
   overflow: hidden;
   border: 1px solid #334155;
 }
@@ -110,13 +232,13 @@
 .payload-slots {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--spacing-stack-sm, 6px);
 }
 
 .payload-slot {
   border: 1px dashed #334155;
-  border-radius: 8px;
-  padding: 8px 10px;
+  border-radius: var(--radius-md, 0.375rem);
+  padding: var(--spacing-stack-sm, 8px) var(--spacing-stack-sm, 10px);
   font-size: 12px;
   color: #cbd5e1;
   min-height: 34px;
@@ -134,7 +256,7 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--spacing-stack-sm, 6px);
   font-size: 11px;
   color: #cbd5e1;
 }
@@ -153,23 +275,23 @@
   margin-top: 4px;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--spacing-stack-sm, 8px);
 }
 
 .cost-bar {
   display: inline-block;
   width: 72px;
   height: 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-md, 0.375rem);
   flex-shrink: 0;
   background: linear-gradient(
     90deg,
-    #7dd3fc 0%,
-    #86efac 20%,
-    #fde047 40%,
-    #fdba74 60%,
-    #f472b6 80%,
-    #c084fc 100%
+    #7dd3fc 0%,    /* Sky - cheapest */
+    #86efac 20%,   /* Green */
+    #fde047 40%,    /* Yellow */
+    #fdba74 60%,    /* Orange */
+    #f472b6 80%,    /* Pink */
+    #c084fc 100%    /* Violet - expensive */
   );
 }
 
@@ -206,7 +328,7 @@
 .log-line {
   color: #94a3b8;
   margin-bottom: 4px;
-  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .log-ok {
