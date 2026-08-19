@@ -12,25 +12,13 @@ formulate `Applicable` instead. See `project/design.md`.
 
 ```bash
 cd project/backend
-python -m venv .venv
-# Windows:
-.venv\Scripts\activate
-# macOS/Linux:
-# source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn src.main:app --reload --port 8000
-```
-
-Or from `backend/src`:
-
-```bash
-cd project/backend/src
-uvicorn main:app --reload --port 8000
+py -m uvicorn src.main:app --reload --port 8000
 ```
 
 ## Tests
 
 ```bash
 cd project/backend
-python tests/test_demo_plan.py
+py -m pytest tests/main_test.py
 ```

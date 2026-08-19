@@ -5,12 +5,7 @@
 ### 1.1 Paradigma arquitectónico
 
 El sistema se formula como un **agente resolutor de problemas basado en metas
-con búsqueda no informada (ciega)** (*uninformed goal-based problem-solving
-agent*).
-
-El agente no calcula una estimación de distancia a la meta. Por tanto:
-
-$$h(n)=0,\qquad f(n)=g(n)$$
+con búsqueda no informada (ciega)**. El agente no calcula una estimación de distancia a la meta.
 
 La frontera se ordena únicamente por el costo real acumulado $g(n)$. Debido a
 que los corredores y las operaciones tienen costos distintos, la estrategia
@@ -22,7 +17,7 @@ instancia oficial.
 flowchart LR
     Scenario[Escenario JSON] --> State[Estado del mundo]
     State --> Applicable[Acciones aplicables]
-    Goal[Prueba de meta] --> UCS[UCS: frontera ordenada por g(n)]
+    Goal[Prueba de meta] --> UCS["UCS: frontera ordenada por g(n)"]
     Applicable --> UCS
     UCS --> Plan[Plan de operaciones]
     Plan --> Frontend[Ejecutor del frontend]
@@ -180,55 +175,113 @@ y aplica los efectos sin modificar el padre:
 ### 4.1 Máquina de estados del agente durante la ejecución
 
 El siguiente diagrama muestra el comportamiento del agente durante la ejecución
-del plan (no el flujo de búsqueda UCS). Representa las fases operativas del
+del plan. Representa las fases operativas del
 robot mientras ejecuta la secuencia de acciones devuelta por el solver.
 
 ```mermaid
+---
+config:
+  layout: elk
+---
 stateDiagram-v2
-    [*] --> Idle
+    [*] --> 📥_CargandoPlan : Recibe la lista de pasos del planificador
 
-    state Idle {
-        entry / initialize_environment()
-        exit / clear_frontier()
+    state 📥_CargandoPlan {
+        [*] --> 📝_GuardarPasos : Guardar instrucciones en memoria
+        📝_GuardarPasos --> 🔢_IniciarContador : Empezar en el paso 1
+        🔢_IniciarContador --> [*] : Robot listo para actuar
     }
 
-    Idle --> Active : start_plan
-    Active --> Complete : goal_reached
-    Active --> Failed : no_valid_sucesor
-    Complete --> [*]
-    Failed --> Idle : retry
+    📥_CargandoPlan --> 🔍_RevisandoPaso : Iniciar recorrido
 
-    state Active {
-        [*] --> Searching
+    state 🔍_RevisandoPaso {
+        [*] --> 📖_LeerPasoActual : Identificar qué acción toca hacer
+        📖_LeerPasoActual --> 🛡️_VerificarEntorno : Confirmar que el camino y el robot están listos
+        🛡️_VerificarEntorno --> [*]
+    }
 
-        state Searching {
-            [*] --> Moving
-            Moving --> Collecting : item_found
-            Moving --> Recharging : battery_low
-            Moving --> OpeningDoor : gate_blocked
-            Moving --> Repairing : at_reactor
-            Moving --> GoalCheck : position_evaluated
-            Collecting --> Moving : continue_search
-            Recharging --> Moving : battery_full
-            OpeningDoor --> Moving : access_granted
-            Repairing --> Returning : reactor_fixed
-            Returning --> Moving : route_resumed
-            GoalCheck --> [*] : meta_reached
+    🔍_RevisandoPaso --> ⚙️_RealizandoAccion : [Todo listo para avanzar]
+    🔍_RevisandoPaso --> ⚠️_DetectarFalloPrevio : [El entorno no coincide con lo esperado]
+
+    state ⚙️_RealizandoAccion {
+        [*] --> 🔀_IdentificarTipoTarea : ¿Qué tarea corresponde?
+
+        🔀_IdentificarTipoTarea --> 🚜_Desplazamiento : Tarea de Movimiento
+        🔀_IdentificarTipoTarea --> 🦾_ManejoMaterial : Tarea de Recoger o Entregar
+        🔀_IdentificarTipoTarea --> 🔋_CargaEnergia : Tarea de Recarga
+        🔀_IdentificarTipoTarea --> 🔘_UsoInterruptor : Tarea de Accionar Puerta/Botón
+
+        state 🚜_Desplazamiento {
+            [*] --> 🗺️_TrazarRutaLocal : Calcular camino corto
+            🗺️_TrazarRutaLocal --> 🏎️_MoverRuedas : Activar motores
+            🏎️_MoverRuedas --> 📡_SensorAnticolision : Sensores vigilando el frente
+            📡_SensorAnticolision --> 🏁_LlegadaACelda : Posición alcanzada
+            LlegadaACelda --> [*]
         }
 
-        --
-        state MissionState {
-            [*] --> InventoryTracking
-            InventoryTracking --> DoorTracking : access_changed
-            DoorTracking --> ReactorTracking : repair_ready
-            ReactorTracking --> InventoryTracking : state_updated
+        state 🦾_ManejoMaterial {
+            [*] --> 🎯_AlinearBrazo : Orientar la pinza hacia el objeto
+            🎯_AlinearBrazo --> 🤏_AccionarGarra : Agarrar o soltar el objeto
+            AccionarGarra --> 📦_ConfirmarCarga : Comprobar peso/sensor
+            📦_ConfirmarCarga --> [*]
+        }
+
+        state 🔋_CargaEnergia {
+            [*] --> 🔌_ConectarEstacion : Acoplarse al enchufe de carga
+            🔌_ConectarEstacion --> ⚡_LlenarBateria : Recibir electricidad
+            ⚡_LlenarBateria --> 🔓_DesconectarEstacion : Batería al 100%
+            🔓_DesconectarEstacion --> [*]
+        }
+
+        state 🔘_UsoInterruptor {
+            [*] --> 👆_PresionarBoton : Tocar interruptor
+            👆_PresionarBoton --> 🚪_ConfirmarCambio : Verificar apertura de paso
+            🚪_ConfirmarCambio --> [*]
+        }
+
+        🚜_Desplazamiento --> 📊_ValidarResultadoPaso : Movimiento finalizado
+        🦾_ManejoMaterial --> 📊_ValidarResultadoPaso : Objeto manipulado
+        🔋_CargaEnergia --> 📊_ValidarResultadoPaso : Batería recargada
+        🔘_UsoInterruptor --> 📊_ValidarResultadoPaso : Interruptor accionado
+
+        state 📊_ValidarResultadoPaso {
+            [*] --> 👁️_SensorConfirmacion : Revisar con sensores que todo salió bien
+            👁️_SensorConfirmacion --> [*]
         }
     }
 
-    note right of Repairing
-        Requires: Fusible in inventory
-        and robot located at node E
-    end note
+    ⚙️_RealizandoAccion --> 🔄_EvaluandoSiguienteAccion : [Paso completado con éxito]
+    ⚙️_RealizandoAccion --> 🚫_BloqueoEnCamino : [Obstáculo inesperado en el camino]
+
+    state 🔄_EvaluandoSiguienteAccion {
+        [*] --> ➕_AvanzarContador : Sumar 1 al paso actual
+        ➕_AvanzarContador --> ❓_QuedanMasPasos : ¿Faltan acciones por hacer?
+        ❓_QuedanMasPasos --> [*]
+    }
+
+    🔄_EvaluandoSiguienteAccion --> 🔍_RevisandoPaso : [Sí: pasar al siguiente paso]
+    🔄_EvaluandoSiguienteAccion --> 🏁_RevisionMetaFinal : [No: se ejecutaron todos los pasos]
+
+    state 🏁_RevisionMetaFinal {
+        [*] --> 🎯_ComprobarObjetivoCumplido : ¿Se logró la meta completa?
+        🎯_ComprobarObjetivoCumplido --> [*]
+    }
+
+    🏁_RevisionMetaFinal --> 🏆_MisionCompletada : [Objetivo alcanzado con éxito]
+    🏁_RevisionMetaFinal --> ❌_MetaIncompleta : [Falta algún requisito para la meta]
+
+    state 🛑_ManejoDeImprevistos {
+        ⚠️_DetectarFalloPrevio --> 🛑_FrenarRobot : Detener motores de forma segura
+        🚫_BloqueoEnCamino --> 🛑_FrenarRobot : Freno inmediato por obstáculo
+        ❌_MetaIncompleta --> 🛑_FrenarRobot : Detener por resultado incompleto
+        🛑_FrenarRobot --> 📡_EnviarAlertaYEstado : Informar al planificador qué pasó
+        📡_EnviarAlertaYEstado --> [*]
+    }
+
+    🛑_ManejoDeImprevistos --> [*] : El planificador crea un nuevo plan adaptado
+
+    🏆_MisionCompletada --> ⏳_EnReposo : Avisar al usuario y descansar
+    ⏳_EnReposo --> [*] : En espera de una nueva misión
 ```
 
 ## 5. Prueba de meta ($\mathcal{G}$)

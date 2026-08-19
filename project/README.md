@@ -24,10 +24,8 @@ Abre **dos terminales**.
 
 ```bash
 cd project/backend
-python -m venv .venv
-.\.venv\Scripts\activate
 pip install -r requirements.txt
-uvicorn main:app --app-dir src --port 8000
+py -m uvicorn src.main:app --reload
 ```
 
 Comprobar: http://127.0.0.1:8000/api/health
@@ -50,8 +48,7 @@ Hasta que conecte su agente, `/api/solve` devuelve el plan artesanal de `demo_pl
 
 ```bash
 cd project/backend
-.\.venv\Scripts\activate
-python tests/test_demo_plan.py
+py -m pytest tests/main_test.py
 ```
 
 ## Contrato visual vs agente (importante)
